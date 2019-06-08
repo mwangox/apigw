@@ -5,5 +5,5 @@ import (
 )
 
 func main() {
-	fmt.Println("Hello Tanzania, this is apigw")
+	fmt.Println("Hello Tanzania")
 }
