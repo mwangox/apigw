@@ -2,41 +2,83 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
-	"sync"
+	"time"
+
+	"github.com/garyburd/redigo/redis"
+	"github.com/magiconair/properties"
+
+	"github.com/google/uuid"
 )
 
-var urls = []string{
-	"https://google.com",
-	"https://tutorialedge.net",
-	"https://twitter.com",
-}
+var pool redis.Pool
+var config = properties.MustLoadFile("../../conf/application.properties", properties.UTF8)
 
-func home(w http.ResponseWriter, r *http.Request) {
+func init() {
 
-	wg := sync.WaitGroup{}
+	pool = redis.Pool{
+		MaxActive:   config.MustGetInt("redis.pool.maxActive"),
+		MaxIdle:     config.MustGetInt("redis.pool.maxIdle"),
+		IdleTimeout: 60 * time.Second,
+		Wait:        true,
+		Dial: func() (redis.Conn, error) {
+			c, err := redis.Dial("tcp", fmt.Sprintf("%s:%s", config.MustGetString("redis.host"), config.MustGetString("redis.port")))
+			if err != nil {
+				return nil, err
+			}
 
-	for _, url := range urls {
-		wg.Add(1)
-		go fetch(url, &wg)
+			return c, nil
+		},
+		TestOnBorrow: func(conn redis.Conn, t time.Time) error {
+			_, err := conn.Do("PING")
+
+			return err
+
+		},
 	}
-	wg.Wait()
-	fmt.Fprintf(w, "All responses received")
+
 }
 
-func fetch(url string, wg *sync.WaitGroup) {
-	resp, err := http.Get(url)
+func sum(w http.ResponseWriter, r *http.Request) {
+	params := r.URL.Query()
+
+	guuid := uuid.New().String()
+	replyAddress := fmt.Sprintf("QR:http:%s", guuid)
+	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
+	numberOne := params.Get("numberOne")
+	numberTwo := params.Get("numberTwo")
+	timeToLive := 20
+	//Query String for msvc
+	requestStr := fmt.Sprintf(`
+	{
+		"timestamp":"%s",
+		"serviceName":"adder_msvc",
+		"ttl":"%d",
+		"params":{"numberOne":"%s", "numberTwo":"%s"},
+		"replyQueue":"%s"
+	}`, timestamp, timeToLive, numberOne, numberTwo, replyAddress)
+
+	//  Send Request to apigw
+	conn := pool.Get()
+	defer conn.Close()
+	_, err := conn.Do("lpush", "Q:comms", requestStr)
 	if err != nil {
-		log.Println(err)
+		fmt.Println("Error during writing int apigw Queue", err)
 	}
-	fmt.Println(resp.Status, url)
-	defer wg.Done()
-}
+	//Blocking right pop command with timeout
+	result, err := redis.StringMap(conn.Do("brpop", replyAddress, timeToLive))
+	if err != nil {
+		fmt.Fprintln(w, "Error during reading Reply Queue", err)
+	}
 
+	for _, v := range result {
+		fmt.Fprintln(w, v)
+	}
+
+}
 func main() {
 
-	http.HandleFunc("/", home)
+	http.HandleFunc("/sum", sum)
 	http.ListenAndServe(":9090", nil)
 
 }

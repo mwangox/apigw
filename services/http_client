@@ -1,1 +1,1 @@
-{"serviceName":"http_client","qName":"Q:http","servicePort":"90001","serviceHost":"localhost","healthCheck":"health"}
+{"serviceName":"http_client","qName":"Q:http_codec","servicePort":"90001","serviceHost":"localhost","healthCheck":"health"}
